@@ -1,11 +1,146 @@
-# Mandelbrot-fractals-render-farm
-A Distributed Rendering Farm with Failure Recovery
+# Mandelbrot Fractals Render Farm
+
+## What are we doing?
+
+We are building a system that uses several worker processes to draw one
+Mandelbrot image. We split the image into small rectangles called **tiles**.
+Each worker calculates some tiles, then we put the results together into one image.
+
+The main goal is to learn how to share work between workers and recover when
+something fails. For example, if one worker stops halfway through, another
+worker should finish its missing tiles. We should not need to start the whole
+image again.
+
+**The project is still in progress.** We are building the Python pieces first.
+The networked workers, durable storage, Raft and full image output come later.
+
+## What is a Mandelbrot image?
+
+For each pixel, we choose a complex number `c` based on its position. We start
+with `z = 0` and repeat this equation:
+
+```text
+z = z² + c
+```
+
+If `abs(z)` becomes greater than `2`, we stop and use the number of iterations
+to choose a color. If it does not escape within our iteration limit, we color
+that pixel black. This gives us a picture like this:
+
+![Example Mandelbrot image with a black shape and colored edges](docs/images/mandelbrot-example.png)
+
+*This is a reference preview calculated from the example settings below. It
+shows the kind of image we want to produce; the distributed render farm is
+still being built.*
+
+Mandelbrot works well for this project because each pixel can be calculated
+independently. Workers can calculate different parts of the same image without
+waiting for each other's results. Larger images and higher iteration limits
+give them more work to share.
+
+## Example of user input
+
+The user will choose the image size, the area to draw and the iteration limit.
+Here is an example job in JSON. These are the field names our Python classes
+already use; submitting a job through a form or API is planned.
+
+```json
+{
+  "width": 800,
+  "height": 600,
+  "real_min": -2.0,
+  "real_max": 1.0,
+  "imag_min": -1.125,
+  "imag_max": 1.125,
+  "max_iterations": 100,
+  "tile_size": 100
+}
+```
+
+| Input | What it means |
+| --- | --- |
+| `width`, `height` | We want an image that is 800 pixels wide and 600 pixels high. |
+| `real_min`, `real_max` | The left and right edges of the area we want to draw. |
+| `imag_min`, `imag_max` | The bottom and top edges of that area. Changing these bounds lets us zoom in. |
+| `max_iterations` | We repeat the equation at most 100 times for each pixel. A higher limit can show more detail near the boundary, but takes more work. |
+| `tile_size` | We split the image into tiles of up to 100 × 100 pixels. This can be a system setting with a default. |
+
+## How will we handle this input?
+
+1. **Check the input.** The coordinator will check that the image dimensions
+   are integers greater than 1, the tile size and iteration limit are positive
+   integers, and each minimum bound is smaller than its maximum.
+2. **Split the image.** `TileGenerator` turns this 800 × 600 image into
+   **48 tiles**: 8 across and 6 down. Each tile gets an ID and pixel bounds.
+   If the image size does not divide evenly, the edge tiles are smaller.
+3. **Queue the work.** Each tile starts as `PENDING`. The coordinator tracks
+   its status, assigned worker, attempts and result. Our current `Task` class
+   keeps this in memory; the planned durable queue will recover it from disk
+   after a restart.
+4. **Give tiles to workers.** A worker asks for work. The coordinator assigns
+   a tile and marks it `RUNNING`. The worker uses the job settings and the
+   tile's position in the full image to calculate its pixels.
+5. **Collect results and recover unfinished work.** A worker sends back a grid
+   of iteration counts. The coordinator checks the result and marks the tile
+   `COMPLETED`. If a worker stops responding, its unfinished tile can go back
+   into the queue for another worker. If it reaches the retry limit, we mark
+   it `FAILED` and report the failure.
+6. **Build the final image.** When all tiles are completed, the assembler
+   converts the counts into colors and places each tile in its correct
+   position. The user gets one 800 × 600 PNG image.
+
+For example, the first tile generated from this input is:
+
+```json
+{
+  "task_id": 0,
+  "row_start": 0,
+  "row_end": 100,
+  "col_start": 0,
+  "col_end": 100
+}
+```
+
+This means rows 0–99 and columns 0–99: the top-left 100 × 100 pixels.
+The end values are excluded, so neighboring tiles do not overlap. The worker
+also needs the shared job settings above; the tile only describes its part
+of the image.
+
+## Why a durable queue and Raft?
+
+The **durable queue** remembers what still needs to be done and what has
+already finished, even after a restart. A Python queue in memory alone cannot
+do that.
+
+For the later version, we plan to use **three coordinators with Raft**. One is
+the leader and handles assignments. Raft keeps their saved task history in
+agreement, so if the leader fails, another coordinator can take over using
+the saved work. At least two of the three must be available to make progress.
+
+This is one logical durable queue with a copy inside each coordinator. We are
+not adding a separate queue server. Raft will confirm queue changes before
+the leader sends an assignment or acknowledges a completed result.
+
+## What have we built so far?
+
+- [`MandelbrotRenderer`](renderer/mandelbrot.py): the equation, pixel mapping
+  and a tile-rendering method. This part is still being corrected and tested.
+- [`TileGenerator`](tile_generator/tile_generator.py): splits image dimensions
+  into tiles, including smaller tiles at the edges.
+- [`Task`](task/task.py): keeps an in-memory queue and tracks assignments,
+  results, retries and failed tasks.
+- [`Tests`](Tests): simple assertion tests for the renderer and task queue.
+  These do not yet test a complete distributed render.
+
+Our first distributed milestone is **one coordinator and two workers**, with
+a demonstration where we stop one worker and still finish the image. After
+that, we will add durable storage and recovery across coordinator failures.
 
 ## Architecture diagrams
 
 These diagrams describe the **planned distributed system**. The current Python
-implementation contains `MandelbrotRenderer`, which is still under development.
-Coordinators, Raft, workers, leases, the web UI and image assembly are planned.
+pieces are listed above. Networked coordinators and workers, durable storage,
+Raft, leases, the web UI and image assembly are planned.
 Message names describe a proposed protocol, not an implemented API.
 
 The first milestone uses one coordinator and two workers. The diagrams show the
