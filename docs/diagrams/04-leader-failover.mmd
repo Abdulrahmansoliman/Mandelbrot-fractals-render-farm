@@ -1,0 +1,66 @@
+---
+title: "04 / Durable queue recovery across a leader failure - planned"
+---
+sequenceDiagram
+    accTitle: Planned Raft leader failure and duplicate-result recovery
+    accDescr: Coordinator A applies a committed completion to its durable queue then crashes before acknowledging the worker. The elected coordinator B commits a current-term no-op and applies the committed history to its own durable queue replica. Reading that queue detects a retry and preserves the accepted grid without counting it twice. Coordinator A can reconstruct its queue when it restarts.
+    autonumber
+    participant W as Worker
+    box rgb(245, 240, 255) Inside coordinator A
+        participant A as A - Scheduler + Raft<br/>Old leader
+        participant QA as Durable queue<br/>Replica A
+    end
+    box rgb(245, 240, 255) Inside coordinator B
+        participant B as B - Scheduler + Raft<br/>Follower to leader
+        participant QB as Durable queue<br/>Replica B
+    end
+    participant C as Coordinator C<br/>Raft + queue replica C
+
+    Note over A,C: The queue lanes are local state inside their coordinators.<br/>All three queue replicas are recoverable from their persistent Raft logs.<br/>A follower can store an entry before it learns that the entry committed.
+
+    rect rgb(239, 245, 255)
+        W->>A: COMPLETE_TASK(task_id, attempt, token, grid)
+        A->>A: Validate and persist completion in term T
+        A->>B: AppendEntries(COMPLETE_TASK, term T)
+        A->>C: AppendEntries(COMPLETE_TASK, term T)
+        B-->>A: Durable ACK
+        Note over A,C: C may lag. A + B already form a majority.
+        A->>QA: Apply committed COMPLETE_TASK<br/>RUNNING to COMPLETED, retain accepted grid
+        QA-->>A: Completion applied once
+        A--xW: COMPLETE_ACK never arrives
+        Note over A,QA: A crashes before the worker receives confirmation.<br/>Its in-memory queue is unavailable, but committed history survives.
+    end
+
+    rect rgb(255, 247, 229)
+        Note over B,C: Heartbeats stop and randomized election timeouts elapse
+        B->>B: Become candidate<br/>Persist term T+1 and self-vote
+        B->>C: RequestVote(T+1, lastLogTerm, lastLogIndex)
+        C->>C: Check term, prior vote and log freshness<br/>Persist vote for B
+        C-->>B: Vote granted
+        B->>B: Self-vote + C's vote = 2 of 3<br/>Become leader
+        B->>B: Persist a no-op entry in term T+1
+        B->>C: AppendEntries(missing entries + new-term no-op)
+        C-->>B: Durable ACK
+        B->>B: Commit through the new-term no-op
+        B->>QB: Apply the committed history to B's queue<br/>Recover task states, attempts, leases and accepted grids
+        QB-->>B: Tile is COMPLETED with its accepted result
+        B->>C: AppendEntries(updated commit index)
+        C->>C: Apply committed entries to durable queue replica C
+    end
+
+    rect rgb(229, 247, 240)
+        W->>B: Discover new leader and retry the same COMPLETE_TASK
+        B->>QB: Look up task_id and attempt in the durable queue
+        QB-->>B: Already COMPLETED<br/>Existing accepted result, no state change
+        B-->>W: COMPLETE_ACK for the existing result
+        Note over W,C: Scheduling continues from B's durable queue replica.<br/>PENDING work remains available and completed work stays completed.<br/>The duplicate retry does not add another accepted result.
+    end
+
+    opt A restarts with its disk intact
+        B->>A: AppendEntries(newer term, missing entries, commit index)
+        A->>A: Follow the newer term and persist received entries
+        A->>QA: Reconstruct and catch up A's queue<br/>Apply only committed entries in order
+        A-->>B: Replication ACK
+    end
+
+    Note over A,C: If A is isolated instead of crashed, it cannot commit alone.<br/>With fewer than two connected coordinators, new scheduling decisions wait.

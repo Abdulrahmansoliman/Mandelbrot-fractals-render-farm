@@ -1,0 +1,49 @@
+---
+title: "03 / Durable queue recovery after worker failure - planned"
+---
+flowchart TB
+    accTitle: Planned worker failure recovery and stale-result handling
+    accDescr: The durable queue is a local replica inside each coordinator. A committed assignment moves its tile record from pending to running. Committed expiration either re-enqueues the tile as pending or retains it as failed. Committed completion stores the accepted grid once. The leader reads this queue for retries and duplicate detection, and followers apply the same committed commands.
+
+    Q[("DURABLE TASK QUEUE<br/>One local replica inside each coordinator<br/>Recoverable from committed Raft history")]
+    Q -->|"Current tile record after committed assignment"| R["Queue state: RUNNING<br/>Task, attempt, token and lease version"]
+    R -->|"Worker returns a result"| CHECK{"Queue already has a<br/>COMPLETED record for this attempt?"}
+    CHECK -->|"Yes: duplicate retry"| ACK["Leader returns COMPLETE_ACK<br/>Reuse the queue's accepted result; count once"]
+    CHECK -->|"No"| VALID{"Current RUNNING attempt,<br/>valid token and result shape?"}
+    VALID -->|"No"| REJECT["Reject stale or invalid result<br/>Durable queue state stays unchanged"]
+    VALID -->|"Yes"| COMPLETE["Commit conditional COMPLETE_TASK<br/>Apply to the durable queue if still current"]
+    COMPLETE --> WON{"Result of applying<br/>COMPLETE_TASK?"}
+    WON -->|"Accepted now"| DONE["Queue state: COMPLETED<br/>Retain the accepted tile grid once"]
+    DONE --> ACK
+    WON -->|"Same attempt already completed"| ACK
+    WON -->|"Stale or expired attempt"| REJECT
+
+    R -->|"Worker crashes or messages stop;<br/>leader observes queue's lease deadline"| EXPIRE["Commit conditional EXPIRE_TASK<br/>Apply to the durable queue with attempt and lease version"]
+    EXPIRE --> CURRENT{"Queue record still RUNNING<br/>with the observed lease version?"}
+    CURRENT -->|"No: renewal or completion won"| NOOP["No-op<br/>Keep the queue's newer committed state"]
+    CURRENT -->|"Yes"| RETRIES{"Attempt limit reached?"}
+    RETRIES -->|"Yes"| FAILED["Queue state: FAILED<br/>Retain in the durable failed-task list"]
+    RETRIES -->|"No"| PENDING["Queue state: PENDING<br/>Re-enqueue the unfinished tile"]
+    PENDING --> REQUEST["Idle worker requests work<br/>Leader reads a PENDING tile from the queue"]
+    REQUEST --> ASSIGN["Commit ASSIGN_TASK and apply to queue<br/>Increment attempt; issue a new lease token"]
+    ASSIGN -->|"Only now return TASK"| NEXT["Queue state: RUNNING - next attempt<br/>Another worker computes the tile"]
+
+    RULE["Only the leader proposes expiration.<br/>Followers update their own queue replicas from committed commands.<br/>If a majority is unavailable, new queue transitions wait."]
+    EXPIRE -.-> RULE
+
+    classDef running fill:#e6efff,stroke:#2563eb,color:#123269
+    classDef operation fill:#f1f5ff,stroke:#7892b8,color:#243b60
+    classDef decision fill:#fff8e8,stroke:#b8841c,color:#674511
+    classDef success fill:#e4f6f1,stroke:#16856a,color:#104d40
+    classDef failure fill:#fff0ef,stroke:#bd4d46,color:#7e2929
+    classDef neutral fill:#f1f5f9,stroke:#8a99ac,color:#41516a
+    classDef note fill:#ffffff,stroke:#9aa7b5,stroke-dasharray:5 4,color:#41516a
+    classDef queue fill:#f1eaff,stroke:#8052b8,stroke-width:2px,color:#462a70
+    class Q queue
+    class R,NEXT running
+    class EXPIRE,COMPLETE,ASSIGN operation
+    class CHECK,VALID,WON,CURRENT,RETRIES decision
+    class DONE,ACK success
+    class FAILED,REJECT failure
+    class NOOP,PENDING,REQUEST neutral
+    class RULE note

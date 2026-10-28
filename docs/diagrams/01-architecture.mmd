@@ -1,0 +1,63 @@
+---
+title: "01 / Target system architecture"
+---
+flowchart TB
+    accTitle: Planned Mandelbrot render farm architecture
+    accDescr: Each of three coordinators contains a persistent Raft log and its own replica of the durable task queue. The scheduler reads pending tasks from its local queue. Raft replicates commands, and each coordinator applies committed commands to its queue. Workers communicate with the leader. Accepted grids are read from the durable queue for image assembly.
+
+    UI["User / Web UI<br/>Submit jobs and view progress"]
+
+    subgraph RAFT["ONE LOGICAL DURABLE TASK QUEUE - replicated inside three coordinators"]
+        direction LR
+
+        subgraph CA["Coordinator A - current leader"]
+            direction TB
+            A["Scheduler + Raft<br/>Persistent log"]
+            QA[("Durable task queue - replica A<br/>PENDING / RUNNING / COMPLETED / FAILED<br/>Attempts, leases and accepted grids")]
+            A -->|"Apply committed commands"| QA
+            QA -.->|"Read pending tasks, leases and results"| A
+        end
+
+        subgraph CB["Coordinator B - follower"]
+            direction TB
+            B["Raft follower<br/>Persistent log"]
+            QB[("Durable task queue - replica B<br/>Same committed task history<br/>Attempts, leases and accepted grids")]
+            B -->|"Apply committed commands"| QB
+        end
+
+        subgraph CC["Coordinator C - follower"]
+            direction TB
+            C["Raft follower<br/>Persistent log"]
+            QC[("Durable task queue - replica C<br/>Same committed task history<br/>Attempts, leases and accepted grids")]
+            C -->|"Apply committed commands"| QC
+        end
+
+        A <-->|"AppendEntries / durable ACK"| B
+        A <-->|"AppendEntries / durable ACK"| C
+    end
+
+    W["Independent workers: 1, 2, ... N<br/>Pull one available tile at a time<br/>MandelbrotRenderer.render_tile(task)"]
+    AS["One logical image assembler<br/>Color iteration counts and stitch tiles<br/>Can rebuild from committed results"]
+    PNG["Final PNG"]
+
+    UI -->|"CREATE_JOB<br/>dimensions, complex bounds,<br/>max_iterations, tile_size"| A
+    A -.->|"Job status / image reference"| UI
+    W -->|"REQUEST_TASK<br/>HEARTBEAT / COMPLETE_TASK"| A
+    A -->|"TASK after assignment commits<br/>job settings, tile bounds,<br/>attempt, lease token + deadline"| W
+    QA -->|"Leader reads all COMPLETED grids<br/>and coordinates for assembly"| AS
+    AS -->|"Write image"| PNG
+
+    classDef client fill:#f1f5f9,stroke:#64748b,color:#17243b
+    classDef leader fill:#e6efff,stroke:#2563eb,stroke-width:2px,color:#123269
+    classDef follower fill:#f1f5ff,stroke:#7892b8,color:#243b60
+    classDef worker fill:#e4f6f1,stroke:#16856a,color:#104d40
+    classDef assembler fill:#fff3d8,stroke:#b8841c,color:#674511
+    classDef output fill:#17324d,stroke:#17324d,color:#ffffff
+    classDef queue fill:#f1eaff,stroke:#8052b8,stroke-width:2px,color:#462a70
+    class UI client
+    class A leader
+    class B,C follower
+    class W worker
+    class AS assembler
+    class PNG output
+    class QA,QB,QC queue

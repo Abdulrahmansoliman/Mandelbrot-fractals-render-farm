@@ -1,0 +1,74 @@
+---
+title: "02 / Message flow through the durable task queue - planned"
+---
+sequenceDiagram
+    accTitle: Planned normal job and tile message sequence
+    accDescr: The leader reads pending tasks from its local durable queue replica. Job creation, assignment, renewal and completion update that queue only after Raft commitment. Followers apply the same committed commands to their own replicas. The assembler receives completed grids read from the queue. The queue lane represents internal state, not a separate server.
+    autonumber
+    actor U as User / UI
+    box rgb(245, 240, 255) Inside the leader coordinator
+        participant L as Scheduler + Raft
+        participant Q as Durable task queue<br/>Leader's local replica
+    end
+    participant F as Followers B and C<br/>Each has a queue replica
+    participant W as Worker
+    participant A as Assembler
+
+    Note over L,F: One logical durable queue with three local replicas.<br/>The Q lane shows local calls inside the leader process.<br/>Each new command is persisted locally and replicated to both followers.<br/>Leader + one follower ACK commits a current-term entry.
+
+    rect rgb(239, 245, 255)
+        U->>L: CREATE_JOB(job_id, dimensions,<br/>complex bounds, max_iterations, tile_size)
+        L->>L: Persist CREATE_JOB in the Raft log
+        L->>F: AppendEntries(CREATE_JOB)
+        F-->>L: Durable replication ACK from at least one follower
+        L->>Q: Apply committed CREATE_JOB<br/>Enqueue tiles as PENDING
+        Q-->>L: Job and PENDING tile records ready
+        L-->>U: JOB_ACCEPTED(job_id)
+    end
+
+    loop Until every tile is completed (workers run concurrently)
+        W->>L: REQUEST_TASK(worker_id)
+        L->>Q: Read an available PENDING tile
+        Q-->>L: Candidate task and current attempt
+        L->>L: Persist conditional ASSIGN_TASK
+        L->>F: AppendEntries(ASSIGN_TASK,<br/>task_id, worker_id, attempt, token, deadline)
+        F-->>L: Durable ACK from at least one follower
+        L->>Q: Apply committed ASSIGN_TASK if still PENDING<br/>PENDING to RUNNING, store attempt and lease
+        Q-->>L: Assignment applied successfully
+        L-->>W: TASK(job_id, task_id, job settings,<br/>row/col bounds, attempt, lease token + deadline)
+        W->>W: MandelbrotRenderer(job).render_tile(task)
+
+        opt More computation time is needed
+            W->>L: HEARTBEAT(worker_id, task_id, attempt, lease_token)
+            L->>Q: Check current attempt, lease token and version
+            Q-->>L: Current lease record
+            L->>L: Persist conditional RENEW_LEASE
+            L->>F: AppendEntries(RENEW_LEASE, new deadline, lease version)
+            F-->>L: Durable ACK from at least one follower
+            L->>Q: Apply committed RENEW_LEASE<br/>Update deadline and lease version
+            Q-->>L: Lease extension applied
+            L-->>W: LEASE_RENEWED(new deadline)
+        end
+
+        W->>L: COMPLETE_TASK(job_id, task_id,<br/>attempt, lease_token, iteration_grid)
+        L->>Q: Read task status, attempt and lease token
+        Q-->>L: Current RUNNING task record
+        L->>L: Validate record and grid shape<br/>Persist conditional COMPLETE_TASK
+        L->>F: AppendEntries(COMPLETE_TASK,<br/>identifiers, attempt, token, iteration_grid)
+        F-->>L: Durable ACK from at least one follower
+        L->>Q: Apply committed COMPLETE_TASK<br/>RUNNING to COMPLETED, retain accepted grid
+        Q-->>L: Completion applied once
+        L-->>W: COMPLETE_ACK(job_id, task_id, attempt)
+    end
+
+    rect rgb(229, 247, 240)
+        L->>Q: Read all COMPLETED grids and coordinates for the job
+        Q-->>L: All tile results ready for assembly
+        L->>A: ASSEMBLE(job settings, all committed grids + coordinates)
+        A->>A: Convert counts to colors<br/>Stitch tiles and write PNG
+        A-->>L: PNG_READY(image reference)
+        L-->>U: JOB_COMPLETED(image reference)
+    end
+
+    Note over L,F: Followers apply committed commands to their own queues<br/>when later AppendEntries advance their commit index.<br/>Queue state is recoverable from the persistent committed Raft history.
+    Note over L,A: Normal successful path only. Failed jobs do not produce a complete image.<br/>The PNG can be regenerated from the durable queue's accepted grids.
