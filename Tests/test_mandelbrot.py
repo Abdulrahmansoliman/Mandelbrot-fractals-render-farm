@@ -1,10 +1,22 @@
-from renderer.mandelbrot import escape_iterations
-assert escape_iterations(1 + 1j, 100) == 2
+from renderer.mandelbrot import MandelbrotRenderer
 
-assert escape_iterations(0, 100) is None
+job = {
+    "width": 3,
+    "height": 3,
+    "real_min": -1,
+    "real_max": 1,
+    "imag_min": -1,
+    "imag_max": 1,
+    "max_iterations": 100,
+}
+renderer = MandelbrotRenderer(job)
 
-assert escape_iterations(-1, 100) is None
+assert renderer.caculcate_iterations(1 + 1j) == 2
 
-assert escape_iterations(1, 100) == 3
+assert renderer.caculcate_iterations(0) is None
+
+assert renderer.caculcate_iterations(-1) is None
+
+assert renderer.caculcate_iterations(1) == 3
 
 print("All 4 tests passed!")
