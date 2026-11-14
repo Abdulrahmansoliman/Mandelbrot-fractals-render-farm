@@ -1,19 +1,22 @@
 {
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
     "editor.quickSuggestions": {
-        "other": "off",
+        "other": "on",
         "comments": "off",
         "strings": "off"
     },
-    "editor.suggestOnTriggerCharacters": false,
+    "editor.suggestOnTriggerCharacters": true,
+    "editor.suggest.preview": false,
     "editor.inlineSuggest.enabled": false,
     "editor.tabCompletion": "off",
     "[python]": {
         "editor.quickSuggestions": {
-            "other": "off",
+            "other": "on",
             "comments": "off",
             "strings": "off"
         },
-        "editor.suggestOnTriggerCharacters": false,
+        "editor.suggestOnTriggerCharacters": true,
+        "editor.suggest.preview": false,
         "editor.inlineSuggest.enabled": false,
         "editor.tabCompletion": "off"
     }

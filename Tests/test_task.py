@@ -70,8 +70,16 @@ assert queue.tasks[0]["worker_id"] == "worker_1"
 assert queue.tasks[0]["attempts"] == 1
 assert queue.peek_task() == second_tile
 
+assert queue.assign_task("worker_1") == first_tile
+assert queue.tasks[0]["attempts"] == 1
+assert list(queue.pending) == [1]
+
 assert queue.assign_task("worker_2") == second_tile
 assert list(queue.pending) == []
+assert queue.assign_task("worker_1") == first_tile
+assert queue.assign_task("worker_2") == second_tile
+assert queue.tasks[0]["attempts"] == 1
+assert queue.tasks[1]["attempts"] == 1
 expect_value_error(queue.assign_task, "worker_3")
 
 # Only the assigned worker can complete a running task.
@@ -124,5 +132,12 @@ assert queue.complete_task(1, "worker_3", result) is False
 expect_value_error(queue.retry_task, 1)
 expect_value_error(queue.fail_task, 1)
 assert queue.dead == [1]
+
+queue = Task(max_attempts=3)
+queue.add_task([first_tile, second_tile])
+assert queue.assign_task("worker_1") == first_tile
+assert queue.complete_task(0, "worker_1", result) is True
+assert queue.get_worker_task("worker_1") is None
+assert queue.assign_task("worker_1") == second_tile
 
 print("All Task tests passed!")

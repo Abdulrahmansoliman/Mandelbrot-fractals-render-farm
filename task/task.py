@@ -37,7 +37,17 @@ class Task:
         return self.tasks[task_id]["task"]
     
     
+    def get_worker_task(self, worker_id):
+        for record in self.tasks.values():
+            if record["status"] == "RUNNING" and record["worker_id"] == worker_id:
+                return record["task"]
+        return None
+
     def assign_task(self, worker_id):
+        task = self.get_worker_task(worker_id)
+        if task is not None:
+            return task
+
         if not self.pending:
             raise ValueError("Task queue is empty")
         
@@ -95,12 +105,4 @@ class Task:
         self.tasks[task_id]["worker_id"] = None
 
         self.pending.append(task_id)   
-        return True 
-        
-                
-        
-        
-        
-                
-        
-            
+        return True
