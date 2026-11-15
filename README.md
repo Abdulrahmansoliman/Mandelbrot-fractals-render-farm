@@ -11,8 +11,26 @@ something fails. For example, if one worker stops halfway through, another
 worker should finish its missing tiles. I should not need to start the whole
 image again.
 
-**The project is still in progress.** I am building the Python pieces first.
-The networked workers, durable storage, Raft and full image output come later.
+**The project is still in progress.** I have one coordinator and workers
+communicating over HTTP. Failure recovery, durable storage, Raft and full
+image output come later.
+
+## How do I run it?
+
+From the project folder, with my virtual environment activated, I run:
+
+```powershell
+python main.py
+```
+
+This starts one coordinator and three worker processes. The workers keep
+requesting tasks until the job finishes, then the program stops the coordinator.
+I can also press `Ctrl+C` to stop the run.
+
+I change the worker count, host and port in the `main(...)` call at the bottom
+of `main.py`. I keep the image settings in `coordinator/server.py`.
+The coordinator needs a free port; this launcher does not replace a server
+that is already running there.
 
 ## What is a Mandelbrot image?
 
@@ -129,6 +147,10 @@ the leader sends an assignment or acknowledges a completed result.
   into tiles, including smaller tiles at the edges.
 - [`Task`](task/task.py): keeps an in-memory queue and tracks assignments,
   results, retries and failed tasks.
+- [`Coordinator`](coordinator/server.py) and [`Worker`](worker/worker.py):
+  assign tasks and return tile results over HTTP.
+- [`main.py`](main.py): starts the coordinator and uses
+  [`WorkerManager`](worker/worker_manager.py) to run three workers together.
 - [`Tests`](Tests): simple assertion tests for the renderer and task queue.
   These do not yet test a complete distributed render.
 
@@ -139,7 +161,7 @@ that, I will add durable storage and recovery across coordinator failures.
 ## Architecture diagrams
 
 These diagrams describe the **planned distributed system**. The current Python
-pieces are listed above. Networked coordinators and workers, durable storage,
+pieces are listed above. Replicated coordinators, durable storage,
 Raft, leases, the web UI and image assembly are planned.
 Message names describe a proposed protocol, not an implemented API.
 
