@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from task.task import Task
 from tile_generator.tile_generator import TileGenerator
 
-
 app = FastAPI()
 
 job = {
@@ -23,6 +22,8 @@ job = {
 image = TileGenerator(job)
 
 tiles = image.generate_tiles()
+
+
 
 queue = Task(3)
 
@@ -73,6 +74,8 @@ def request_task(request: TaskRequest):
             task = queue.assign_task(request.worker_id)
             status = "assigned"
 
+        print("Worker", request.worker_id, "has task", task["task_id"], flush=True)
+
         return {
             "status": status,
             "task": task,
@@ -115,7 +118,4 @@ def complete_task(request: CompletionRequest):
             request.result,
         )
 
-        return {"accepted": accepted}            
-        
-
-
+        return {"accepted": accepted}

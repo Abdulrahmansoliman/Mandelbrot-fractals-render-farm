@@ -60,7 +60,7 @@ class MandelbrotRenderer:
 
                 # Convert the pixel position into a complex number.
                 c = self.pixel_to_complex(row, col)
-                iterations = self.escape_iterations(c)
+                iterations = self.caculcate_iterations(c)
                 current_row.append(iterations)
 
             results.append(current_row)
