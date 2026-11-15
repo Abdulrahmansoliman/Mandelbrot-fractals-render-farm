@@ -27,10 +27,35 @@ This starts one coordinator and three worker processes. The workers keep
 requesting tasks until the job finishes, then the program stops the coordinator.
 I can also press `Ctrl+C` to stop the run.
 
-I change the worker count, host and port in the `main(...)` call at the bottom
-of `main.py`. I keep the image settings in `coordinator/server.py`.
+I change the worker count, host, port and coordination mode in the `main(...)`
+call at the bottom of `main.py`. I keep the image settings in the `job`
+dictionary near the top of that file. The current mode is `SingleCoordinator`.
 The coordinator needs a free port; this launcher does not replace a server
 that is already running there.
+
+## How is the code organized?
+
+I keep the coordination mode separate from the HTTP server and the rendering code.
+
+| File or folder | What it does |
+| --- | --- |
+| `main.py` | Chooses the mode and job settings, then starts the server and workers. |
+| `coordinator/server.py` | Builds the HTTP application with `create_app(protocol)` and passes requests to that mode. |
+| `protocols/single_coordinator.py` | Implements the current baseline: one local queue, FIFO assignments, status tracking and result checks. |
+| `task/` | Holds the task queue and shared task error types. |
+| `worker/` | Runs independent workers and sends their requests over HTTP. |
+| `renderer/` and `tile_generator/` | Calculate pixels and split the image into tiles. |
+
+Each coordination mode needs `get_status()`, `request_task(worker_id)` and
+`complete_task(task_id, worker_id, result)`. These return the task data and
+status responses the workers already use. The HTTP layer converts task errors
+into HTTP responses; the mode does not depend on FastAPI.
+
+Only the single-coordinator mode is implemented. Later I can add Raft beside
+it in `protocols/` and select its class in `main.py`. Raft will need its own
+replication and commitment logic before changing task state. Other modes may
+need different state and merging rules; sharing the HTTP interface does not
+give them the same guarantees.
 
 ## What is a Mandelbrot image?
 
@@ -147,12 +172,14 @@ the leader sends an assignment or acknowledges a completed result.
   into tiles, including smaller tiles at the edges.
 - [`Task`](task/task.py): keeps an in-memory queue and tracks assignments,
   results, retries and failed tasks.
-- [`Coordinator`](coordinator/server.py) and [`Worker`](worker/worker.py):
-  assign tasks and return tile results over HTTP.
+- [`SingleCoordinator`](protocols/single_coordinator.py): the current scheduling
+  mode, using one local queue with no replication.
+- [`HTTP server`](coordinator/server.py) and [`Worker`](worker/worker.py):
+  exchange task requests and tile results over HTTP.
 - [`main.py`](main.py): starts the coordinator and uses
   [`WorkerManager`](worker/worker_manager.py) to run three workers together.
-- [`Tests`](Tests): simple assertion tests for the renderer and task queue.
-  These do not yet test a complete distributed render.
+- [`Tests`](Tests): assertion tests for the renderer, task queue, worker loop,
+  single-coordinator mode and HTTP endpoints.
 
 My first distributed milestone is **one coordinator and two workers**, with
 a demonstration where I stop one worker and still finish the image. After

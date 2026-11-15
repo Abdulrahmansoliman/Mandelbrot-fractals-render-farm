@@ -5,11 +5,27 @@ from multiprocessing import Process
 import requests
 import uvicorn
 
+from coordinator.server import create_app
+from protocols.single_coordinator import SingleCoordinator
 from worker.worker_manager import WorkerManager
 
 
-def run_coordinator(listener):
-    config = uvicorn.Config("coordinator.server:app", log_level="warning")
+job = {
+    "width": 800,
+    "height": 600,
+    "real_min": -2.0,
+    "real_max": 1.0,
+    "imag_min": -1.125,
+    "imag_max": 1.125,
+    "max_iterations": 100,
+    "tile_size": 100,
+}
+
+
+def run_coordinator(listener, protocol_class, job):
+    protocol = protocol_class(job)
+    app = create_app(protocol)
+    config = uvicorn.Config(app, log_level="warning")
     server = uvicorn.Server(config)
     server.run(sockets=[listener])
 
@@ -31,12 +47,21 @@ def wait_for_coordinator(coordinator, coordinator_url):
     raise RuntimeError("The coordinator did not become ready")
 
 
-def main(worker_count=3, host="127.0.0.1", port=8000):
+def main(
+    worker_count=3,
+    host="127.0.0.1",
+    port=8000,
+    protocol_class=SingleCoordinator,
+):
     with socket.socket() as listener:
         listener.bind((host, port))
         coordinator_url = f"http://{host}:{listener.getsockname()[1]}"
         manager = WorkerManager(worker_count, coordinator_url)
-        coordinator = Process(target=run_coordinator, args=(listener,), name="coordinator")
+        coordinator = Process(
+            target=run_coordinator,
+            args=(listener, protocol_class, job),
+            name="coordinator",
+        )
 
         try:
             coordinator.start()
@@ -52,6 +77,11 @@ def main(worker_count=3, host="127.0.0.1", port=8000):
 
 if __name__ == "__main__":
     try:
-        main(worker_count=3, host="127.0.0.1", port=8000)
+        main(
+            worker_count=3,
+            host="127.0.0.1",
+            port=8000,
+            protocol_class=SingleCoordinator,
+        )
     except KeyboardInterrupt:
         print("Render farm stopped")
