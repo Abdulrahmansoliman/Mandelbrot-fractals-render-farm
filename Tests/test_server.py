@@ -62,6 +62,7 @@ with running_server(protocol) as url, requests.Session() as client:
     assert response.json()["PENDING"] == {"count": 2, "tasks": [0, 1]}
     assert post("/tasks/request", {}).status_code == 422
     assert post("/workers/worker_1/kill", {}).status_code == 503
+    assert post("/workers/worker_1/restart", {}).status_code == 503
 
     response = post("/tasks/request", {"worker_id": "worker_1"})
     assert response.status_code == 200

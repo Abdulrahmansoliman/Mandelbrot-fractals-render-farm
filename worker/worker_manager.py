@@ -1,5 +1,6 @@
 from multiprocessing import Process
 from threading import Lock
+import time
 
 from worker.worker import Worker
 
@@ -42,12 +43,16 @@ class WorkerManager:
                 print(f"Started {worker_id} (PID {process.pid})", flush=True)
 
     def wait(self):
-        for process in self.processes:
-            process.join()
-
-        if any(process.exitcode != 0 and process.name not in self.killed_workers
-               for process in self.processes):
-            raise RuntimeError("A worker stopped with an error")
+        while True:
+            with self.lock:
+                if all(not process.is_alive() for process in self.processes):
+                    for process in self.processes:
+                        process.join()
+                    if any(process.exitcode != 0 and process.name not in self.killed_workers
+                           for process in self.processes):
+                        raise RuntimeError("A worker stopped with an error")
+                    return
+            time.sleep(0.1)
 
     def stop(self):
         for process in self.processes:
@@ -68,5 +73,22 @@ class WorkerManager:
                     process.terminate()
                     process.join()
                     self.killed_workers.add(worker_id)
+                    return True
+            raise ValueError(f"Worker {w_id} not found")
+
+    def restart(self, w_id):
+        with self.lock:
+            for index, (worker_id, process) in enumerate(self.workers):
+                if w_id == worker_id:
+                    if process.is_alive():
+                        return False
+                    process.join()
+                    worker = Worker(worker_id, self.coordinator_url)
+                    new_process = Process(target=worker.run, name=worker_id)
+                    new_process.start()
+                    self.workers[index] = (worker_id, new_process)
+                    self.processes[index] = new_process
+                    self.killed_workers.discard(worker_id)
+                    print(f"Restarted {worker_id} (PID {new_process.pid})", flush=True)
                     return True
             raise ValueError(f"Worker {w_id} not found")

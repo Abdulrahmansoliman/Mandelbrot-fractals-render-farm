@@ -58,6 +58,22 @@ The endpoint returns `killed: false` if the worker already stopped, and HTTP
 404 for an unknown worker ID. It controls only workers started by this local
 manager. It is a local demo control without authentication.
 
+To bring a stopped worker back, I run:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/workers/worker_1/restart"
+```
+
+This starts a new process with the same worker ID. If the worker is still
+running, it returns `restarted: false` and does not create a second copy.
+An unknown worker ID returns HTTP 404.
+
+The worker asks the coordinator for work again. If its previous assignment is
+still valid, it recalculates that tile from the beginning with the original
+deadline. Otherwise, it receives available work normally. Restarting does not
+reset the queue, deadlines or attempt counts. If the job is already finished,
+the restarted worker exits normally.
+
 I can run a repeatable crash recovery test with:
 
 ```powershell
@@ -65,7 +81,8 @@ python -m Tests.test_failure_recovery
 ```
 
 This test deliberately slows one worker, kills it over HTTP, and checks that
-the remaining workers complete every tile.
+the remaining workers complete every tile. It also checks that restarting a
+killed worker creates a new process and lets it finish its original assignment.
 
 ## How is the code organized?
 

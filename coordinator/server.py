@@ -50,6 +50,16 @@ def create_app(protocol, worker_manager=None):
             raise HTTPException(status_code=404, detail=str(error)) from error
         return {"worker_id": worker_id, "killed": killed}
 
+    @app.post("/workers/{worker_id}/restart")
+    def restart_worker(worker_id: str):
+        if worker_manager is None:
+            raise HTTPException(status_code=503, detail="Worker manager is not available")
+        try:
+            restarted = worker_manager.restart(worker_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return {"worker_id": worker_id, "restarted": restarted}
+
     @app.get("/status")
     def get_status():
         return protocol.get_status()
