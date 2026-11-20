@@ -11,11 +11,12 @@ from protocols.single_coordinator import SingleCoordinator
 
 
 @contextmanager
-def running_server(protocol):
+def running_server(protocol, manager=None):
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
+        listener.listen()
         url = f"http://127.0.0.1:{listener.getsockname()[1]}"
-        config = uvicorn.Config(create_app(protocol), log_level="error")
+        config = uvicorn.Config(create_app(protocol, manager), log_level="error")
         server = uvicorn.Server(config)
         thread = threading.Thread(
             target=server.run,
@@ -60,6 +61,7 @@ with running_server(protocol) as url, requests.Session() as client:
     assert response.status_code == 200
     assert response.json()["PENDING"] == {"count": 2, "tasks": [0, 1]}
     assert post("/tasks/request", {}).status_code == 422
+    assert post("/workers/worker_1/kill", {}).status_code == 503
 
     response = post("/tasks/request", {"worker_id": "worker_1"})
     assert response.status_code == 200
@@ -77,6 +79,7 @@ with running_server(protocol) as url, requests.Session() as client:
 
     completion = {
         "task_id": 0,
+        "attempt": 1,
         "worker_id": "worker_1",
         "result": [[None, 2], [3, 4]],
     }

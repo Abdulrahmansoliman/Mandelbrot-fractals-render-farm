@@ -12,6 +12,7 @@ class Worker:
         self.job = None
         self.renderer = None
         self.assigned_task = None
+        self.attempt = None
 
     def request_task(self):
         response = requests.post(
@@ -24,6 +25,7 @@ class Worker:
         self.assigned_task = assignment["task"]
 
         if self.assigned_task is not None:
+            self.attempt = assignment["attempt"]
             job = assignment["job"]
             if job != self.job:
                 self.job = job
@@ -49,6 +51,7 @@ class Worker:
                 "task_id": self.assigned_task["task_id"],
                 "worker_id": self.id,
                 "result": result,
+                "attempt": self.attempt,
             },
             timeout=10,
         )

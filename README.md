@@ -12,8 +12,8 @@ worker should finish its missing tiles. I should not need to start the whole
 image again.
 
 **The project is still in progress.** I have one coordinator and workers
-communicating over HTTP. Failure recovery, durable storage, Raft and full
-image output come later.
+communicating over HTTP, with task timeouts and worker crash recovery.
+Durable storage, Raft and full image output come later.
 
 ## How do I run it?
 
@@ -24,14 +24,48 @@ python main.py
 ```
 
 This starts one coordinator and three worker processes. The workers keep
-requesting tasks until the job finishes, then the program stops the coordinator.
-I can also press `Ctrl+C` to stop the run.
+requesting tasks until the job finishes. The coordinator stays open so I can
+check the results. I press `Ctrl+C` to stop the server and remaining workers.
 
 I change the worker count, host, port and coordination mode in the `main(...)`
 call at the bottom of `main.py`. I keep the image settings in the `job`
 dictionary near the top of that file. The current mode is `SingleCoordinator`.
 The coordinator needs a free port; this launcher does not replace a server
 that is already running there.
+
+## How do I test a worker crash?
+
+While the job is running, I open another PowerShell terminal and run:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/workers/worker_1/kill"
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/status" | ConvertTo-Json -Depth 5
+```
+
+The kill endpoint stops that local worker process. It does not change the task
+queue directly. After the assignment deadline expires, the coordinator retries
+the task and another worker can take it. After three unsuccessful attempts,
+the task becomes FAILED. An attempt number prevents an old result from
+completing a newer assignment.
+
+I set `task_timeout=30` in `main.py`. This is seconds per assignment, not seconds
+since the worker was killed. There are no heartbeat renewals yet, so I choose a
+timeout longer than a healthy tile normally takes. If the job finishes too
+quickly to kill a busy worker manually, I increase its size or iteration count.
+If I kill every worker, pending tasks need a worker before they can finish.
+
+The endpoint returns `killed: false` if the worker already stopped, and HTTP
+404 for an unknown worker ID. It controls only workers started by this local
+manager. It is a local demo control without authentication.
+
+I can run a repeatable crash recovery test with:
+
+```powershell
+python -m Tests.test_failure_recovery
+```
+
+This test deliberately slows one worker, kills it over HTTP, and checks that
+the remaining workers complete every tile.
 
 ## How is the code organized?
 
@@ -47,7 +81,7 @@ I keep the coordination mode separate from the HTTP server and the rendering cod
 | `renderer/` and `tile_generator/` | Calculate pixels and split the image into tiles. |
 
 Each coordination mode needs `get_status()`, `request_task(worker_id)` and
-`complete_task(task_id, worker_id, result)`. These return the task data and
+`complete_task(task_id, worker_id, result, attempt)` and `expire_tasks()`. These return the task data and
 status responses the workers already use. The HTTP layer converts task errors
 into HTTP responses; the mode does not depend on FastAPI.
 
